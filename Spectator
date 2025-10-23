@@ -1,5 +1,34 @@
--- Player Spectator Script untuk Roblox (Improved Version)
--- Letakkan script ini di StarterGui sebagai LocalScript
+--[[
+	═══════════════════════════════════════════════════════════════════════
+	ROBLOX PLAYER SPECTATOR SCRIPT
+	═══════════════════════════════════════════════════════════════════════
+	
+	Version: 2.1 (Fixed - Hide All Players)
+	Author: ItoRenz00
+	License: MIT
+	
+	Description:
+		A comprehensive spectator system that allows players to observe others
+		with a clean, distraction-free view. Automatically hides all player
+		GUIs including nametags, health bars, and overhead elements.
+	
+	Installation:
+		Place this script in StarterGui as a LocalScript
+	
+	Features:
+		• Toggle spectator mode with eye icon button
+		• Navigate between players with arrow buttons
+		• Hides ALL players' GUIs during spectate mode
+		• Mobile and PC support with adaptive UI
+		• Automatic player list management
+		• Proper state restoration on exit
+	
+	═══════════════════════════════════════════════════════════════════════
+--]]
+
+--[[═══════════════════════════════════════════════════════════════════════
+	SERVICES & REFERENCES
+═══════════════════════════════════════════════════════════════════════--]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -10,72 +39,109 @@ local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 local originalCameraSubject = camera.CameraSubject
 
+--[[═══════════════════════════════════════════════════════════════════════
+	STATE MANAGEMENT
+═══════════════════════════════════════════════════════════════════════--]]
+
 local isSpectating = false
 local currentSpectateIndex = 1
 local spectateList = {}
+
+-- UI state tracking
 local coreGuisEnabled = {}
-local hiddenObjects = {}
 local hiddenCustomGuis = {}
 
--- Deteksi device (Mobile atau PC)
+-- Per-player GUI state storage
+local hiddenObjectsPerPlayer = {}
+
+-- Device detection
 local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 
--- Fungsi untuk menyembunyikan semua GUI di kepala player (IMPROVED)
-local function hidePlayerGui(character, hide)
+--[[═══════════════════════════════════════════════════════════════════════
+	GUI MANAGEMENT FUNCTIONS
+═══════════════════════════════════════════════════════════════════════--]]
+
+--[[
+	Hide or restore GUI elements on a player's character
+	@param character - The character model to modify
+	@param hide - Boolean: true to hide, false to restore
+--]]
+local function togglePlayerGui(character, hide)
 	if not character then return end
+	
+	local targetPlayer = Players:GetPlayerFromCharacter(character)
+	if not targetPlayer then return end
+	
+	local playerUserId = targetPlayer.UserId
+	
+	-- Initialize storage for this player
+	if not hiddenObjectsPerPlayer[playerUserId] then
+		hiddenObjectsPerPlayer[playerUserId] = {}
+	end
 	
 	local success, err = pcall(function()
 		local head = character:FindFirstChild("Head")
 		if not head then return end
 		
-		-- Sembunyikan semua BillboardGui
+		-- Process BillboardGui elements
 		for _, descendant in pairs(character:GetDescendants()) do
 			if descendant:IsA("BillboardGui") then
 				if hide then
-					hiddenObjects[descendant] = descendant.Enabled
+					-- Store original state only once
+					if hiddenObjectsPerPlayer[playerUserId][descendant] == nil then
+						hiddenObjectsPerPlayer[playerUserId][descendant] = descendant.Enabled
+					end
 					descendant.Enabled = false
 				else
-					if hiddenObjects[descendant] ~= nil then
-						descendant.Enabled = hiddenObjects[descendant]
-						hiddenObjects[descendant] = nil
+					-- Restore original state
+					if hiddenObjectsPerPlayer[playerUserId][descendant] ~= nil then
+						descendant.Enabled = hiddenObjectsPerPlayer[playerUserId][descendant]
 					end
 				end
 			end
 		end
 		
-		-- Sembunyikan nametag dan health bar default
+		-- Process Humanoid display (nametag and health bar)
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
 			if hide then
+				if hiddenObjectsPerPlayer[playerUserId]["humanoidDisplay"] == nil then
+					hiddenObjectsPerPlayer[playerUserId]["humanoidDisplay"] = humanoid.DisplayDistanceType
+				end
 				humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 			else
-				humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+				if hiddenObjectsPerPlayer[playerUserId]["humanoidDisplay"] then
+					humanoid.DisplayDistanceType = hiddenObjectsPerPlayer[playerUserId]["humanoidDisplay"]
+				end
 			end
 		end
 		
-		-- Sembunyikan semua TextLabel dan TextButton di dalam Head
+		-- Process text elements and SurfaceGuis in Head
 		for _, obj in pairs(head:GetDescendants()) do
+			-- Handle text UI elements
 			if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
 				if hide then
-					hiddenObjects[obj] = obj.Visible
+					if hiddenObjectsPerPlayer[playerUserId][obj] == nil then
+						hiddenObjectsPerPlayer[playerUserId][obj] = obj.Visible
+					end
 					obj.Visible = false
 				else
-					if hiddenObjects[obj] ~= nil then
-						obj.Visible = hiddenObjects[obj]
-						hiddenObjects[obj] = nil
+					if hiddenObjectsPerPlayer[playerUserId][obj] ~= nil then
+						obj.Visible = hiddenObjectsPerPlayer[playerUserId][obj]
 					end
 				end
 			end
 			
-			-- Sembunyikan SurfaceGui
+			-- Handle SurfaceGui elements
 			if obj:IsA("SurfaceGui") then
 				if hide then
-					hiddenObjects[obj] = obj.Enabled
+					if hiddenObjectsPerPlayer[playerUserId][obj] == nil then
+						hiddenObjectsPerPlayer[playerUserId][obj] = obj.Enabled
+					end
 					obj.Enabled = false
 				else
-					if hiddenObjects[obj] ~= nil then
-						obj.Enabled = hiddenObjects[obj]
-						hiddenObjects[obj] = nil
+					if hiddenObjectsPerPlayer[playerUserId][obj] ~= nil then
+						obj.Enabled = hiddenObjectsPerPlayer[playerUserId][obj]
 					end
 				end
 			end
@@ -83,23 +149,48 @@ local function hidePlayerGui(character, hide)
 	end)
 	
 	if not success and err then
-		warn("Error in hidePlayerGui:", err)
+		warn("[Spectator] Error in togglePlayerGui:", err)
 	end
 end
 
--- Fungsi untuk menampilkan kembali GUI di kepala player
-local function showPlayerGui(character)
-	hidePlayerGui(character, false)
+--[[
+	Hide GUI elements for ALL players in the game
+--]]
+local function hideAllPlayersGui()
+	for _, p in pairs(Players:GetPlayers()) do
+		if p.Character then
+			togglePlayerGui(p.Character, true)
+		end
+	end
 end
 
--- Fungsi untuk membuat GUI
-local function createGUI()
+--[[
+	Restore GUI elements for ALL players in the game
+--]]
+local function showAllPlayersGui()
+	for _, p in pairs(Players:GetPlayers()) do
+		if p.Character then
+			togglePlayerGui(p.Character, false)
+		end
+	end
+end
+
+--[[═══════════════════════════════════════════════════════════════════════
+	UI CREATION
+═══════════════════════════════════════════════════════════════════════--]]
+
+--[[
+	Create the spectator GUI interface
+	@return screenGui, toggleButton, prevButton, nextButton, infoLabel
+--]]
+local function createSpectatorGUI()
+	-- Main screen GUI container
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "SpectatorGUI"
 	screenGui.ResetOnSpawn = false
 	screenGui.Parent = player.PlayerGui
 	
-	-- Toggle Button dengan posisi dan size berbeda untuk mobile dan PC
+	-- Toggle button (Eye icon)
 	local toggleButton = Instance.new("TextButton")
 	toggleButton.Name = "ToggleButton"
 	toggleButton.Text = "👁️"
@@ -108,13 +199,12 @@ local function createGUI()
 	toggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 	toggleButton.BorderSizePixel = 0
 	
+	-- Device-specific sizing
 	if isMobile then
-		-- Posisi untuk Mobile (UPDATED)
 		toggleButton.Size = UDim2.new(0, 25, 0, 25)
-		toggleButton.Position = UDim2.new(1, -35, 0.5, -130)
+		toggleButton.Position = UDim2.new(1, -35, 0.5, -110)
 		toggleButton.TextSize = 20
 	else
-		-- Posisi untuk PC (UPDATED)
 		toggleButton.Size = UDim2.new(0, 30, 0, 30)
 		toggleButton.Position = UDim2.new(1, -35, 0.5, -200)
 		toggleButton.TextSize = 25
@@ -122,12 +212,12 @@ local function createGUI()
 	
 	toggleButton.Parent = screenGui
 	
-	-- Corner radius
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 15)
-	corner.Parent = toggleButton
+	-- Rounded corners for toggle button
+	local toggleCorner = Instance.new("UICorner")
+	toggleCorner.CornerRadius = UDim.new(0, 15)
+	toggleCorner.Parent = toggleButton
 	
-	-- Previous Button (tanpa background abu-abu)
+	-- Previous player button
 	local prevButton = Instance.new("TextButton")
 	prevButton.Name = "PrevButton"
 	prevButton.Text = "◀"
@@ -149,7 +239,7 @@ local function createGUI()
 	
 	prevButton.Parent = screenGui
 	
-	-- Next Button (tanpa background abu-abu)
+	-- Next player button
 	local nextButton = Instance.new("TextButton")
 	nextButton.Name = "NextButton"
 	nextButton.Text = "▶"
@@ -171,7 +261,7 @@ local function createGUI()
 	
 	nextButton.Parent = screenGui
 	
-	-- Info Label (di bawah layar) (UPDATED)
+	-- Info label (displays current spectated player)
 	local infoLabel = Instance.new("TextLabel")
 	infoLabel.Name = "InfoLabel"
 	infoLabel.Text = ""
@@ -194,6 +284,7 @@ local function createGUI()
 	
 	infoLabel.Parent = screenGui
 	
+	-- Rounded corners for info label
 	local infoCorner = Instance.new("UICorner")
 	infoCorner.CornerRadius = UDim.new(0, 10)
 	infoCorner.Parent = infoLabel
@@ -201,9 +292,14 @@ local function createGUI()
 	return screenGui, toggleButton, prevButton, nextButton, infoLabel
 end
 
--- Fungsi untuk menyembunyikan semua UI
-local function hideAllUI()
-	-- Simpan status CoreGui yang aktif (JANGAN sembunyikan PlayerList/Leaderboard)
+--[[═══════════════════════════════════════════════════════════════════════
+	CORE UI FUNCTIONS
+═══════════════════════════════════════════════════════════════════════--]]
+
+--[[
+	Hide all CoreGUI elements and custom ScreenGuis
+--]]
+local function hideGameUI()
 	local coreGuiTypes = {
 		Enum.CoreGuiType.Health,
 		Enum.CoreGuiType.Backpack,
@@ -211,6 +307,7 @@ local function hideAllUI()
 		Enum.CoreGuiType.EmotesMenu
 	}
 	
+	-- Hide CoreGui elements
 	for _, guiType in pairs(coreGuiTypes) do
 		pcall(function()
 			local isEnabled = StarterGui:GetCoreGuiEnabled(guiType)
@@ -221,7 +318,7 @@ local function hideAllUI()
 		end)
 	end
 	
-	-- Simpan dan sembunyikan UI custom player
+	-- Hide custom ScreenGuis (except SpectatorGUI)
 	for _, gui in pairs(player.PlayerGui:GetChildren()) do
 		if gui:IsA("ScreenGui") and gui.Name ~= "SpectatorGUI" then
 			hiddenCustomGuis[gui] = gui.Enabled
@@ -230,9 +327,11 @@ local function hideAllUI()
 	end
 end
 
--- Fungsi untuk menampilkan kembali semua UI
-local function showAllUI()
-	-- Kembalikan status CoreGui HANYA yang tadinya enabled
+--[[
+	Restore all CoreGUI elements and custom ScreenGuis
+--]]
+local function showGameUI()
+	-- Restore CoreGui elements
 	for guiType, wasEnabled in pairs(coreGuisEnabled) do
 		pcall(function()
 			if wasEnabled then
@@ -241,7 +340,7 @@ local function showAllUI()
 		end)
 	end
 	
-	-- Kembalikan status UI custom player sesuai state aslinya
+	-- Restore custom ScreenGuis
 	for gui, wasEnabled in pairs(hiddenCustomGuis) do
 		pcall(function()
 			if gui and gui.Parent then
@@ -250,11 +349,18 @@ local function showAllUI()
 		end)
 	end
 	
+	-- Clear state tracking
 	coreGuisEnabled = {}
 	hiddenCustomGuis = {}
 end
 
--- Fungsi untuk update daftar player yang bisa di-spectate
+--[[═══════════════════════════════════════════════════════════════════════
+	SPECTATOR CORE FUNCTIONS
+═══════════════════════════════════════════════════════════════════════--]]
+
+--[[
+	Update the list of spectatable players
+--]]
 local function updateSpectateList()
 	spectateList = {}
 	for _, p in pairs(Players:GetPlayers()) do
@@ -264,204 +370,256 @@ local function updateSpectateList()
 	end
 end
 
--- Fungsi untuk spectate player tertentu
+--[[
+	Begin spectating a specific player
+	@param targetPlayer - The player to spectate
+	@return boolean - Success status
+--]]
 local function spectatePlayer(targetPlayer)
-	if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Humanoid") then
-		camera.CameraSubject = targetPlayer.Character.Humanoid
-		hidePlayerGui(targetPlayer.Character, true)
-		
-		-- Monitor perubahan pada character yang di-spectate
-		targetPlayer.Character.DescendantAdded:Connect(function(descendant)
-			if isSpectating and camera.CameraSubject == targetPlayer.Character.Humanoid then
+	if not (targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Humanoid")) then
+		return false
+	end
+	
+	-- Set camera to target player
+	camera.CameraSubject = targetPlayer.Character.Humanoid
+	
+	-- Hide all players' GUIs
+	task.wait(0.1)
+	hideAllPlayersGui()
+	
+	-- Setup dynamic GUI hiding for all players
+	for _, p in pairs(Players:GetPlayers()) do
+		if p.Character then
+			p.Character.DescendantAdded:Connect(function(descendant)
+				if not isSpectating then return end
+				
 				task.wait(0.1)
 				pcall(function()
+					local playerUserId = p.UserId
+					
+					-- Initialize storage if needed
+					if not hiddenObjectsPerPlayer[playerUserId] then
+						hiddenObjectsPerPlayer[playerUserId] = {}
+					end
+					
+					-- Handle BillboardGui and SurfaceGui
 					if descendant:IsA("BillboardGui") or descendant:IsA("SurfaceGui") then
+						hiddenObjectsPerPlayer[playerUserId][descendant] = descendant.Enabled
 						descendant.Enabled = false
-					elseif descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox") then
-						local head = targetPlayer.Character:FindFirstChild("Head")
+					end
+					
+					-- Handle text elements in Head
+					if descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox") then
+						local head = p.Character:FindFirstChild("Head")
 						if head and descendant:IsDescendantOf(head) then
+							hiddenObjectsPerPlayer[playerUserId][descendant] = descendant.Visible
 							descendant.Visible = false
 						end
 					end
 				end)
-			end
-		end)
-		
-		return true
-	end
-	return false
-end
-
--- Fungsi untuk stop spectating
-local function stopSpectating()
-	-- Tampilkan kembali GUI yang disembunyikan
-	for _, p in pairs(spectateList) do
-		if p.Character then
-			showPlayerGui(p.Character)
+			end)
 		end
 	end
 	
-	-- Clear hidden objects table
-	hiddenObjects = {}
+	return true
+end
+
+--[[
+	Stop spectating and restore all states
+--]]
+local function stopSpectating()
+	print("[Spectator] Stopping spectate mode, restoring all GUIs...")
 	
+	-- Restore all players' GUIs
+	showAllPlayersGui()
+	
+	-- Clear all stored state
+	hiddenObjectsPerPlayer = {}
+	
+	-- Reset camera to local player
 	if player.Character and player.Character:FindFirstChild("Humanoid") then
 		camera.CameraSubject = player.Character.Humanoid
 	else
 		camera.CameraSubject = originalCameraSubject
 	end
+	
+	-- Update state
 	isSpectating = false
-	showAllUI()
+	
+	-- Restore game UI
+	showGameUI()
+	
+	print("[Spectator] All states restored successfully!")
 end
 
--- Buat GUI
-local gui, toggleBtn, prevBtn, nextBtn, infoLabel = createGUI()
+--[[═══════════════════════════════════════════════════════════════════════
+	GUI EVENT HANDLERS
+═══════════════════════════════════════════════════════════════════════--]]
 
--- Toggle Button Click
+-- Create GUI elements
+local gui, toggleBtn, prevBtn, nextBtn, infoLabel = createSpectatorGUI()
+
+--[[
+	Toggle spectator mode on/off
+--]]
 toggleBtn.MouseButton1Click:Connect(function()
 	isSpectating = not isSpectating
 	
 	if isSpectating then
+		-- Entering spectator mode
 		updateSpectateList()
+		
 		if #spectateList > 0 then
 			currentSpectateIndex = 1
+			
 			if spectatePlayer(spectateList[currentSpectateIndex]) then
-				hideAllUI()
+				-- Hide game UI
+				hideGameUI()
+				
+				-- Update toggle button appearance
 				toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+				
+				-- Show navigation controls
 				prevBtn.Visible = true
 				nextBtn.Visible = true
 				infoLabel.Visible = true
+				
+				-- Display current player info
 				local targetPlayer = spectateList[currentSpectateIndex]
 				infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
 			else
 				isSpectating = false
 			end
 		else
+			-- No players available
 			isSpectating = false
 			infoLabel.Visible = true
 			infoLabel.Text = "No players to spectate!"
-			wait(2)
+			task.wait(2)
 			infoLabel.Visible = false
 		end
 	else
+		-- Exiting spectator mode
 		stopSpectating()
+		
+		-- Reset toggle button appearance
 		toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+		
+		-- Hide navigation controls
 		prevBtn.Visible = false
 		nextBtn.Visible = false
 		infoLabel.Visible = false
 	end
 end)
 
--- Previous Button Click
+--[[
+	Navigate to previous player
+--]]
 prevBtn.MouseButton1Click:Connect(function()
-	if isSpectating and #spectateList > 0 then
-		local oldIndex = currentSpectateIndex
-		
-		updateSpectateList()
-		currentSpectateIndex = currentSpectateIndex - 1
-		if currentSpectateIndex < 1 then
-			currentSpectateIndex = #spectateList
-		end
-		
-		-- Hide GUI player baru TERLEBIH DAHULU
-		if spectateList[currentSpectateIndex] and spectateList[currentSpectateIndex].Character then
-			hidePlayerGui(spectateList[currentSpectateIndex].Character, true)
-		end
-		
-		-- Baru tampilkan GUI player lama
-		if spectateList[oldIndex] and spectateList[oldIndex].Character then
-			showPlayerGui(spectateList[oldIndex].Character)
-		end
-		
-		if spectatePlayer(spectateList[currentSpectateIndex]) then
-			local targetPlayer = spectateList[currentSpectateIndex]
-			infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
-		end
+	if not (isSpectating and #spectateList > 0) then return end
+	
+	updateSpectateList()
+	
+	-- Cycle to previous player
+	currentSpectateIndex = currentSpectateIndex - 1
+	if currentSpectateIndex < 1 then
+		currentSpectateIndex = #spectateList
+	end
+	
+	-- Spectate the new player
+	if spectatePlayer(spectateList[currentSpectateIndex]) then
+		local targetPlayer = spectateList[currentSpectateIndex]
+		infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
 	end
 end)
 
--- Next Button Click
+--[[
+	Navigate to next player
+--]]
 nextBtn.MouseButton1Click:Connect(function()
-	if isSpectating and #spectateList > 0 then
-		local oldIndex = currentSpectateIndex
-		
-		updateSpectateList()
-		currentSpectateIndex = currentSpectateIndex + 1
-		if currentSpectateIndex > #spectateList then
-			currentSpectateIndex = 1
-		end
-		
-		-- Hide GUI player baru TERLEBIH DAHULU
-		if spectateList[currentSpectateIndex] and spectateList[currentSpectateIndex].Character then
-			hidePlayerGui(spectateList[currentSpectateIndex].Character, true)
-		end
-		
-		-- Baru tampilkan GUI player lama
-		if spectateList[oldIndex] and spectateList[oldIndex].Character then
-			showPlayerGui(spectateList[oldIndex].Character)
-		end
-		
-		if spectatePlayer(spectateList[currentSpectateIndex]) then
+	if not (isSpectating and #spectateList > 0) then return end
+	
+	updateSpectateList()
+	
+	-- Cycle to next player
+	currentSpectateIndex = currentSpectateIndex + 1
+	if currentSpectateIndex > #spectateList then
+		currentSpectateIndex = 1
+	end
+	
+	-- Spectate the new player
+	if spectatePlayer(spectateList[currentSpectateIndex]) then
+		local targetPlayer = spectateList[currentSpectateIndex]
+		infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+	end
+end)
+
+--[[═══════════════════════════════════════════════════════════════════════
+	GAME EVENT LISTENERS
+═══════════════════════════════════════════════════════════════════════--]]
+
+--[[
+	Handle player leaving the game
+--]]
+Players.PlayerRemoving:Connect(function(removedPlayer)
+	if not isSpectating then return end
+	
+	-- Clean up removed player's data
+	if removedPlayer then
+		hiddenObjectsPerPlayer[removedPlayer.UserId] = nil
+	end
+	
+	-- Update spectate list
+	updateSpectateList()
+	
+	if #spectateList == 0 then
+		-- No players left, exit spectator mode
+		stopSpectating()
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+		prevBtn.Visible = false
+		nextBtn.Visible = false
+		infoLabel.Visible = false
+	elseif spectateList[currentSpectateIndex] == removedPlayer then
+		-- Currently spectating the removed player, switch to first available
+		currentSpectateIndex = 1
+		if currentSpectateIndex <= #spectateList then
+			spectatePlayer(spectateList[currentSpectateIndex])
 			local targetPlayer = spectateList[currentSpectateIndex]
 			infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
 		end
 	end
 end)
 
--- Auto-update jika player yang di-spectate keluar
-Players.PlayerRemoving:Connect(function(removedPlayer)
-	if isSpectating then
-		-- Bersihkan hiddenObjects untuk player yang keluar
-		if removedPlayer.Character then
-			for obj, _ in pairs(hiddenObjects) do
-				if obj:IsDescendantOf(removedPlayer.Character) then
-					hiddenObjects[obj] = nil
-				end
-			end
-		end
-		
-		updateSpectateList()
-		if #spectateList == 0 then
-			stopSpectating()
-			toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-			prevBtn.Visible = false
-			nextBtn.Visible = false
-			infoLabel.Visible = false
-		elseif spectateList[currentSpectateIndex] == removedPlayer then
-			currentSpectateIndex = 1
-			if currentSpectateIndex <= #spectateList then
-				spectatePlayer(spectateList[currentSpectateIndex])
-				local targetPlayer = spectateList[currentSpectateIndex]
-				infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
-			end
-		end
-	end
-end)
-
--- Handle new player joined
+--[[
+	Handle new player joining the game
+--]]
 Players.PlayerAdded:Connect(function(newPlayer)
 	newPlayer.CharacterAdded:Connect(function(character)
-		-- Jika sedang spectating, hide GUI player baru
 		if isSpectating then
 			task.wait(0.5)
-			if camera.CameraSubject == character:FindFirstChildOfClass("Humanoid") then
-				hidePlayerGui(character, true)
-			end
+			-- Hide the new player's GUI if we're spectating
+			togglePlayerGui(character, true)
 		end
 	end)
 end)
 
--- Handle respawn untuk menampilkan kembali GUI
+--[[
+	Handle local player respawn
+--]]
 player.CharacterAdded:Connect(function(character)
 	if not isSpectating then
-		-- Tampilkan kembali semua GUI saat player respawn
-		for _, p in pairs(Players:GetPlayers()) do
-			if p.Character then
-				showPlayerGui(p.Character)
-			end
-		end
+		-- Restore all players' GUIs when local player respawns
+		showAllPlayersGui()
 	end
 end)
 
-print("✓ Spectator script loaded successfully!")
-print("Device:", isMobile and "Mobile" or "PC")
-print("Improved GUI hiding system active!")
+--[[═══════════════════════════════════════════════════════════════════════
+	INITIALIZATION
+═══════════════════════════════════════════════════════════════════════--]]
+
+print("═══════════════════════════════════════════════════════════════")
+print("✓ Spectator Script Loaded Successfully!")
+print("✓ Version: 2.1")
+print("✓ Device: " .. (isMobile and "Mobile" or "PC"))
+print("✓ Feature: Hides ALL players' GUIs during spectate")
+print("═══════════════════════════════════════════════════════════════")
