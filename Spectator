@@ -1,0 +1,467 @@
+-- Player Spectator Script untuk Roblox (Improved Version)
+-- Letakkan script ini di StarterGui sebagai LocalScript
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local originalCameraSubject = camera.CameraSubject
+
+local isSpectating = false
+local currentSpectateIndex = 1
+local spectateList = {}
+local coreGuisEnabled = {}
+local hiddenObjects = {}
+local hiddenCustomGuis = {}
+
+-- Deteksi device (Mobile atau PC)
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+
+-- Fungsi untuk menyembunyikan semua GUI di kepala player (IMPROVED)
+local function hidePlayerGui(character, hide)
+	if not character then return end
+	
+	local success, err = pcall(function()
+		local head = character:FindFirstChild("Head")
+		if not head then return end
+		
+		-- Sembunyikan semua BillboardGui
+		for _, descendant in pairs(character:GetDescendants()) do
+			if descendant:IsA("BillboardGui") then
+				if hide then
+					hiddenObjects[descendant] = descendant.Enabled
+					descendant.Enabled = false
+				else
+					if hiddenObjects[descendant] ~= nil then
+						descendant.Enabled = hiddenObjects[descendant]
+						hiddenObjects[descendant] = nil
+					end
+				end
+			end
+		end
+		
+		-- Sembunyikan nametag dan health bar default
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			if hide then
+				humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			else
+				humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+			end
+		end
+		
+		-- Sembunyikan semua TextLabel dan TextButton di dalam Head
+		for _, obj in pairs(head:GetDescendants()) do
+			if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+				if hide then
+					hiddenObjects[obj] = obj.Visible
+					obj.Visible = false
+				else
+					if hiddenObjects[obj] ~= nil then
+						obj.Visible = hiddenObjects[obj]
+						hiddenObjects[obj] = nil
+					end
+				end
+			end
+			
+			-- Sembunyikan SurfaceGui
+			if obj:IsA("SurfaceGui") then
+				if hide then
+					hiddenObjects[obj] = obj.Enabled
+					obj.Enabled = false
+				else
+					if hiddenObjects[obj] ~= nil then
+						obj.Enabled = hiddenObjects[obj]
+						hiddenObjects[obj] = nil
+					end
+				end
+			end
+		end
+	end)
+	
+	if not success and err then
+		warn("Error in hidePlayerGui:", err)
+	end
+end
+
+-- Fungsi untuk menampilkan kembali GUI di kepala player
+local function showPlayerGui(character)
+	hidePlayerGui(character, false)
+end
+
+-- Fungsi untuk membuat GUI
+local function createGUI()
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "SpectatorGUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = player.PlayerGui
+	
+	-- Toggle Button dengan posisi dan size berbeda untuk mobile dan PC
+	local toggleButton = Instance.new("TextButton")
+	toggleButton.Name = "ToggleButton"
+	toggleButton.Text = "👁️"
+	toggleButton.Font = Enum.Font.GothamBold
+	toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	toggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+	toggleButton.BorderSizePixel = 0
+	
+	if isMobile then
+		-- Posisi untuk Mobile (UPDATED)
+		toggleButton.Size = UDim2.new(0, 25, 0, 25)
+		toggleButton.Position = UDim2.new(1, -35, 0.5, -130)
+		toggleButton.TextSize = 20
+	else
+		-- Posisi untuk PC (UPDATED)
+		toggleButton.Size = UDim2.new(0, 30, 0, 30)
+		toggleButton.Position = UDim2.new(1, -35, 0.5, -200)
+		toggleButton.TextSize = 25
+	end
+	
+	toggleButton.Parent = screenGui
+	
+	-- Corner radius
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 15)
+	corner.Parent = toggleButton
+	
+	-- Previous Button (tanpa background abu-abu)
+	local prevButton = Instance.new("TextButton")
+	prevButton.Name = "PrevButton"
+	prevButton.Text = "◀"
+	prevButton.Font = Enum.Font.GothamBold
+	prevButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	prevButton.BackgroundTransparency = 1
+	prevButton.BorderSizePixel = 0
+	prevButton.Visible = false
+	
+	if isMobile then
+		prevButton.Size = UDim2.new(0, 50, 0, 60)
+		prevButton.Position = UDim2.new(0, 10, 0.5, -30)
+		prevButton.TextSize = 32
+	else
+		prevButton.Size = UDim2.new(0, 60, 0, 80)
+		prevButton.Position = UDim2.new(0, 15, 0.5, -40)
+		prevButton.TextSize = 40
+	end
+	
+	prevButton.Parent = screenGui
+	
+	-- Next Button (tanpa background abu-abu)
+	local nextButton = Instance.new("TextButton")
+	nextButton.Name = "NextButton"
+	nextButton.Text = "▶"
+	nextButton.Font = Enum.Font.GothamBold
+	nextButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nextButton.BackgroundTransparency = 1
+	nextButton.BorderSizePixel = 0
+	nextButton.Visible = false
+	
+	if isMobile then
+		nextButton.Size = UDim2.new(0, 50, 0, 60)
+		nextButton.Position = UDim2.new(1, -60, 0.5, -30)
+		nextButton.TextSize = 32
+	else
+		nextButton.Size = UDim2.new(0, 60, 0, 80)
+		nextButton.Position = UDim2.new(1, -75, 0.5, -40)
+		nextButton.TextSize = 40
+	end
+	
+	nextButton.Parent = screenGui
+	
+	-- Info Label (di bawah layar) (UPDATED)
+	local infoLabel = Instance.new("TextLabel")
+	infoLabel.Name = "InfoLabel"
+	infoLabel.Text = ""
+	infoLabel.Font = Enum.Font.GothamBold
+	infoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	infoLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	infoLabel.BackgroundTransparency = 0.5
+	infoLabel.BorderSizePixel = 0
+	infoLabel.Visible = false
+	
+	if isMobile then
+		infoLabel.Size = UDim2.new(0, 240, 0, 20)
+		infoLabel.Position = UDim2.new(0.5, -120, 0.85, 20)
+		infoLabel.TextSize = 14
+	else
+		infoLabel.Size = UDim2.new(0, 280, 0, 30)
+		infoLabel.Position = UDim2.new(0.5, -140, 0.85, 60)
+		infoLabel.TextSize = 16
+	end
+	
+	infoLabel.Parent = screenGui
+	
+	local infoCorner = Instance.new("UICorner")
+	infoCorner.CornerRadius = UDim.new(0, 10)
+	infoCorner.Parent = infoLabel
+	
+	return screenGui, toggleButton, prevButton, nextButton, infoLabel
+end
+
+-- Fungsi untuk menyembunyikan semua UI
+local function hideAllUI()
+	-- Simpan status CoreGui yang aktif (JANGAN sembunyikan PlayerList/Leaderboard)
+	local coreGuiTypes = {
+		Enum.CoreGuiType.Health,
+		Enum.CoreGuiType.Backpack,
+		Enum.CoreGuiType.Chat,
+		Enum.CoreGuiType.EmotesMenu
+	}
+	
+	for _, guiType in pairs(coreGuiTypes) do
+		pcall(function()
+			local isEnabled = StarterGui:GetCoreGuiEnabled(guiType)
+			coreGuisEnabled[guiType] = isEnabled
+			if isEnabled then
+				StarterGui:SetCoreGuiEnabled(guiType, false)
+			end
+		end)
+	end
+	
+	-- Simpan dan sembunyikan UI custom player
+	for _, gui in pairs(player.PlayerGui:GetChildren()) do
+		if gui:IsA("ScreenGui") and gui.Name ~= "SpectatorGUI" then
+			hiddenCustomGuis[gui] = gui.Enabled
+			gui.Enabled = false
+		end
+	end
+end
+
+-- Fungsi untuk menampilkan kembali semua UI
+local function showAllUI()
+	-- Kembalikan status CoreGui HANYA yang tadinya enabled
+	for guiType, wasEnabled in pairs(coreGuisEnabled) do
+		pcall(function()
+			if wasEnabled then
+				StarterGui:SetCoreGuiEnabled(guiType, true)
+			end
+		end)
+	end
+	
+	-- Kembalikan status UI custom player sesuai state aslinya
+	for gui, wasEnabled in pairs(hiddenCustomGuis) do
+		pcall(function()
+			if gui and gui.Parent then
+				gui.Enabled = wasEnabled
+			end
+		end)
+	end
+	
+	coreGuisEnabled = {}
+	hiddenCustomGuis = {}
+end
+
+-- Fungsi untuk update daftar player yang bisa di-spectate
+local function updateSpectateList()
+	spectateList = {}
+	for _, p in pairs(Players:GetPlayers()) do
+		if p.Character and p.Character:FindFirstChild("Humanoid") then
+			table.insert(spectateList, p)
+		end
+	end
+end
+
+-- Fungsi untuk spectate player tertentu
+local function spectatePlayer(targetPlayer)
+	if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Humanoid") then
+		camera.CameraSubject = targetPlayer.Character.Humanoid
+		hidePlayerGui(targetPlayer.Character, true)
+		
+		-- Monitor perubahan pada character yang di-spectate
+		targetPlayer.Character.DescendantAdded:Connect(function(descendant)
+			if isSpectating and camera.CameraSubject == targetPlayer.Character.Humanoid then
+				task.wait(0.1)
+				pcall(function()
+					if descendant:IsA("BillboardGui") or descendant:IsA("SurfaceGui") then
+						descendant.Enabled = false
+					elseif descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox") then
+						local head = targetPlayer.Character:FindFirstChild("Head")
+						if head and descendant:IsDescendantOf(head) then
+							descendant.Visible = false
+						end
+					end
+				end)
+			end
+		end)
+		
+		return true
+	end
+	return false
+end
+
+-- Fungsi untuk stop spectating
+local function stopSpectating()
+	-- Tampilkan kembali GUI yang disembunyikan
+	for _, p in pairs(spectateList) do
+		if p.Character then
+			showPlayerGui(p.Character)
+		end
+	end
+	
+	-- Clear hidden objects table
+	hiddenObjects = {}
+	
+	if player.Character and player.Character:FindFirstChild("Humanoid") then
+		camera.CameraSubject = player.Character.Humanoid
+	else
+		camera.CameraSubject = originalCameraSubject
+	end
+	isSpectating = false
+	showAllUI()
+end
+
+-- Buat GUI
+local gui, toggleBtn, prevBtn, nextBtn, infoLabel = createGUI()
+
+-- Toggle Button Click
+toggleBtn.MouseButton1Click:Connect(function()
+	isSpectating = not isSpectating
+	
+	if isSpectating then
+		updateSpectateList()
+		if #spectateList > 0 then
+			currentSpectateIndex = 1
+			if spectatePlayer(spectateList[currentSpectateIndex]) then
+				hideAllUI()
+				toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+				prevBtn.Visible = true
+				nextBtn.Visible = true
+				infoLabel.Visible = true
+				local targetPlayer = spectateList[currentSpectateIndex]
+				infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+			else
+				isSpectating = false
+			end
+		else
+			isSpectating = false
+			infoLabel.Visible = true
+			infoLabel.Text = "No players to spectate!"
+			wait(2)
+			infoLabel.Visible = false
+		end
+	else
+		stopSpectating()
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+		prevBtn.Visible = false
+		nextBtn.Visible = false
+		infoLabel.Visible = false
+	end
+end)
+
+-- Previous Button Click
+prevBtn.MouseButton1Click:Connect(function()
+	if isSpectating and #spectateList > 0 then
+		local oldIndex = currentSpectateIndex
+		
+		updateSpectateList()
+		currentSpectateIndex = currentSpectateIndex - 1
+		if currentSpectateIndex < 1 then
+			currentSpectateIndex = #spectateList
+		end
+		
+		-- Hide GUI player baru TERLEBIH DAHULU
+		if spectateList[currentSpectateIndex] and spectateList[currentSpectateIndex].Character then
+			hidePlayerGui(spectateList[currentSpectateIndex].Character, true)
+		end
+		
+		-- Baru tampilkan GUI player lama
+		if spectateList[oldIndex] and spectateList[oldIndex].Character then
+			showPlayerGui(spectateList[oldIndex].Character)
+		end
+		
+		if spectatePlayer(spectateList[currentSpectateIndex]) then
+			local targetPlayer = spectateList[currentSpectateIndex]
+			infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+		end
+	end
+end)
+
+-- Next Button Click
+nextBtn.MouseButton1Click:Connect(function()
+	if isSpectating and #spectateList > 0 then
+		local oldIndex = currentSpectateIndex
+		
+		updateSpectateList()
+		currentSpectateIndex = currentSpectateIndex + 1
+		if currentSpectateIndex > #spectateList then
+			currentSpectateIndex = 1
+		end
+		
+		-- Hide GUI player baru TERLEBIH DAHULU
+		if spectateList[currentSpectateIndex] and spectateList[currentSpectateIndex].Character then
+			hidePlayerGui(spectateList[currentSpectateIndex].Character, true)
+		end
+		
+		-- Baru tampilkan GUI player lama
+		if spectateList[oldIndex] and spectateList[oldIndex].Character then
+			showPlayerGui(spectateList[oldIndex].Character)
+		end
+		
+		if spectatePlayer(spectateList[currentSpectateIndex]) then
+			local targetPlayer = spectateList[currentSpectateIndex]
+			infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+		end
+	end
+end)
+
+-- Auto-update jika player yang di-spectate keluar
+Players.PlayerRemoving:Connect(function(removedPlayer)
+	if isSpectating then
+		-- Bersihkan hiddenObjects untuk player yang keluar
+		if removedPlayer.Character then
+			for obj, _ in pairs(hiddenObjects) do
+				if obj:IsDescendantOf(removedPlayer.Character) then
+					hiddenObjects[obj] = nil
+				end
+			end
+		end
+		
+		updateSpectateList()
+		if #spectateList == 0 then
+			stopSpectating()
+			toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+			prevBtn.Visible = false
+			nextBtn.Visible = false
+			infoLabel.Visible = false
+		elseif spectateList[currentSpectateIndex] == removedPlayer then
+			currentSpectateIndex = 1
+			if currentSpectateIndex <= #spectateList then
+				spectatePlayer(spectateList[currentSpectateIndex])
+				local targetPlayer = spectateList[currentSpectateIndex]
+				infoLabel.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")"
+			end
+		end
+	end
+end)
+
+-- Handle new player joined
+Players.PlayerAdded:Connect(function(newPlayer)
+	newPlayer.CharacterAdded:Connect(function(character)
+		-- Jika sedang spectating, hide GUI player baru
+		if isSpectating then
+			task.wait(0.5)
+			if camera.CameraSubject == character:FindFirstChildOfClass("Humanoid") then
+				hidePlayerGui(character, true)
+			end
+		end
+	end)
+end)
+
+-- Handle respawn untuk menampilkan kembali GUI
+player.CharacterAdded:Connect(function(character)
+	if not isSpectating then
+		-- Tampilkan kembali semua GUI saat player respawn
+		for _, p in pairs(Players:GetPlayers()) do
+			if p.Character then
+				showPlayerGui(p.Character)
+			end
+		end
+	end
+end)
+
+print("✓ Spectator script loaded successfully!")
+print("Device:", isMobile and "Mobile" or "PC")
+print("Improved GUI hiding system active!")
